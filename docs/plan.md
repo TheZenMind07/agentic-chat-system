@@ -1,77 +1,120 @@
 # Plan — agentic-chat-system
 
 ## Goal
-RAG chat over uploaded documents, fronted by an orchestrator that routes to specialized sub-agents.
+Customer-support chat: customer asks via chat UI, orchestrator routes to one of five specialized sub-agents, response streamed back. Admin separately ingests SOPs/chat-context into a vector DB for the SOP agent.
 
 ## Architecture
 
 ```mermaid
-flowchart TD
-    Q[user query] --> O{Orchestrator<br/>gpt-4o-mini<br/>function-calling router}
-    O -->|multi-hop / compound| P[planner<br/>gpt-4o-mini]
-    O -->|single grounded Q| R[retrieval<br/>gpt-4o-mini]
-    P -->|sub-question 1| R
-    P -->|sub-question 2| R
-    P -->|sub-question n| R
-    R --> V[(ChromaDB<br/>vector store)]
-    R --> A[final answer<br/>+ citations]
-    P --> A
+flowchart LR
+    C[Customer] <--> UI[Chat UI<br/>streamed / chunked]
+    UI <--> API[FastAPI<br/>streaming response]
+    API --> O{Agent Orchestrator<br/>gpt-4o-mini<br/>function-calling router}
+
+    O -->|payment screenshot /<br/>amount extraction| IR[Image Retrieval<br/>gpt-4o-mini vision]
+    O -->|who is the customer| CD[Customer Details<br/>gpt-4o-mini]
+    O -->|driver info| DD[Driver Details<br/>gpt-4o-mini]
+    O -->|booking status / history| BD[Booking Details<br/>gpt-4o-mini]
+    O -->|how do I / SOP question| SOP[Chat Context<br/>gpt-4o-mini<br/>+ ChromaDB]
+
+    IR -.extracts amount/payee.-> IR
+    CD -.JSON lookup.-> CD
+    DD -.JSON lookup.-> DD
+    BD -.JSON lookup.-> BD
+    SOP --> V[(ChromaDB<br/>SOP embeddings)]
+
+    A[Admin] -->|upload SOPs /<br/>chat-context docs| ING[/ingest endpoint/]
+    ING --> V
+
+    O --> A2[final streamed answer]
 ```
 
-## Agents
+![Architecture diagram](images/architecture.png)
 
-| Agent        | Model        | When invoked                                  | Outputs                          |
-|--------------|--------------|-----------------------------------------------|----------------------------------|
-| orchestrator | gpt-4o-mini  | every turn                                    | routes to planner / retrieval    |
-| planner      | gpt-4o-mini  | multi-hop / decomposable questions            | ordered sub-questions            |
-| retrieval    | gpt-4o-mini  | grounded Q&A over Chroma                      | answer + cited sources           |
+## Agents & models
 
-**Why gpt-4o-mini everywhere for now**: routing, retrieval, and summarization are mechanical; cost dominates. Bump any agent to `gpt-4o` later if accuracy suffers.
+| Agent | Model | When invoked | Backing store |
+|---|---|---|---|
+| **Orchestrator** | `gpt-4o-mini` | every turn — routes by intent | — |
+| **Image Retrieval** | `gpt-4o-mini` (vision) | user attaches an image (e.g. payment screenshot) — extracts amount/payee/date/txn-id | none (in-process extraction) |
+| **Customer Details** | `gpt-4o-mini` | questions about a customer (name, contact, history) | `data/customers.json` |
+| **Driver Details** | `gpt-4o-mini` | questions about a driver (assignment, status) | `data/drivers.json` |
+| **Booking Details** | `gpt-4o-mini` | questions about a booking (status, route, fare) | `data/bookings.json` |
+| **Chat Context (SOP)** | `gpt-4o-mini` | "how do I…", policy / procedure questions | ChromaDB |
 
-## Routing logic (supervisor)
+**Why mini everywhere**: orchestrator routes, every sub-agent is either a structured lookup or a grounded RAG answer — none needs `gpt-4o` reasoning. Bump individual agents later if accuracy suffers.
 
-Orchestrator prompt exposes two tools via LangChain function-calling:
-- `call_planner(question)` — for compound / multi-doc questions
-- `call_retrieval(question)` — default; single grounded answer
+## Routing rules (orchestrator prompt)
 
-Heuristics baked into the orchestrator system prompt:
-- short, single-topic question → `retrieval`
-- contains "compare", "summarize across", "list all", multiple entities → `planner`
-- chitchat / no-doc question → `retrieval` (which will answer "I don't know")
+- contains an image attachment → `image_retrieval`
+- mentions customer / passenger / "their info" → `customer_details`
+- mentions driver / "my driver" → `driver_details`
+- mentions booking / trip / ride / fare → `booking_details`
+- "how do I", "policy", "what is the process for", general SOP → `chat_context`
+- ambiguous / chitchat → `chat_context` (will answer "I don't know" if no SOP hit)
+
+## Data (mock JSON, no DB)
+
+```
+data/
+├── customers.json     [{id, name, phone, email, ...}]
+├── drivers.json       [{id, name, vehicle, status, ...}]
+├── bookings.json      [{id, customer_id, driver_id, status, fare, ...}]
+├── chroma/            persisted SOP embeddings (gitignored)
+└── uploads/           admin-ingested SOP files (gitignored)
+```
+
+## Endpoints
+
+| Method | Path | Purpose | Caller |
+|---|---|---|---|
+| GET | `/health` | health check | — |
+| POST | `/chat` (SSE stream) | streamed customer chat response | Chat UI |
+| POST | `/ingest` (multipart) | admin uploads SOP/chat-context docs → Chroma | Admin |
+| POST | `/upload-image` (multipart) | temporary image for vision extraction | Chat UI (via `/chat` payload) |
 
 ## File layout
 
 ```
 backend/app/
-├── main.py            FastAPI routes
-├── config.py          env settings (models, paths, top_k)
-├── vectorstore.py     Chroma wrapper
-├── ingest.py          load + split documents
-├── qa.py              single-shot retrieval (used by retrieval agent)
+├── main.py                 FastAPI: /health, /chat (SSE), /ingest
+├── config.py               env settings
+├── data/                   loads JSON mock data
+│   ├── customers.py
+│   ├── drivers.py
+│   └── bookings.py
+├── vectorstore.py          Chroma wrapper (SOP collection)
+├── ingest.py               SOP file load + split
+├── vision.py               gpt-4o-mini vision extraction helper
 ├── agents/
 │   ├── __init__.py
-│   ├── state.py       GraphState (TypedDict)
-│   ├── retrieval.py   retrieval_agent node
-│   ├── planner.py     planner_agent node
-│   └── orchestrator.py LangGraph supervisor wiring
+│   ├── state.py            GraphState (TypedDict) — messages, route, image_ref
+│   ├── image_retrieval.py  vision node
+│   ├── customer.py         customer lookup node
+│   ├── driver.py           driver lookup node
+│   ├── booking.py          booking lookup node
+│   ├── sop.py              SOP RAG node
+│   └── orchestrator.py     LangGraph supervisor wiring (5 workers, conditional edges)
 └── requirements.txt
 ```
 
 ## Build order
 
-1. `state.py` — shared `GraphState` (`messages`, `next_agent`, `sub_questions`)
-2. `retrieval.py` — wrap existing `qa.answer` as a node
-3. `planner.py` — LLM that returns `List[str]` of sub-questions
-4. `orchestrator.py` — LangGraph `StateGraph` with supervisor + 2 workers, conditional edges
-5. `main.py` — replace `/chat` route with `graph.invoke(...)`
-6. Frontend: surface agent routing in UI (small chip: "via retrieval" / "via planner")
+1. `data/*.py` — load JSON fixtures
+2. `vectorstore.py` + `ingest.py` — SOP ingestion path (already partially done)
+3. `vision.py` — `gpt-4o-mini` image extraction helper
+4. `agents/*.py` — five sub-agent nodes
+5. `agents/orchestrator.py` — LangGraph `StateGraph` with supervisor + 5 workers
+6. `main.py` — `/chat` SSE streaming, `/ingest` admin path
+7. Frontend: image upload, agent-routing chip in UI
 
 ## Non-goals (v1)
-- web search, code execution
-- persistent chat history (in-memory per session)
-- streaming responses (add later with `astream_events`)
-- auth / multi-tenant
+- real DB (Postgres / SQL) — JSON fixtures only
+- real-time driver location / booking APIs — static fixtures
+- multi-tenant / auth
+- persistent chat history across sessions
 
 ## Open questions
-- Replace Chroma with ClickHouse vector search? (ClickHouse has `VectorSearch` since 24.x; would need schema + SQL rewrite.)
-- Swap any sub-agent to GPT-4o? — start with mini, measure, decide.
+- Streaming format: SSE vs WebSocket? (SSE simpler for FastAPI → fetch EventSource on frontend)
+- Vision prompt: structured JSON output via `response_format={"type":"json_object"}` for predictable schema.
+- Should `chat_context` agent also see conversation history (multi-turn SOP Q&A) or only the latest question?
