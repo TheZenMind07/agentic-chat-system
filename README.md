@@ -1,10 +1,12 @@
 # agentic-chat-system
 
-RAG chat over your documents: upload PDFs/text, ask questions, get cited answers.
+Customer-support chat with an agent orchestrator that routes to five specialized sub-agents (image retrieval, customer / driver / booking details, SOP RAG over ChromaDB).
+
+See [`docs/plan.md`](docs/plan.md) for the full architecture and [`docs/images/architecture.png`](docs/images/architecture.png) for the diagram.
 
 ## Stack
 
-- **Backend**: FastAPI, LangChain, ChromaDB (local), OpenAI embeddings + chat
+- **Backend**: FastAPI (SSE streaming), LangChain, LangGraph (supervisor), ChromaDB, OpenAI (`gpt-4o-mini`)
 - **Frontend**: React + Vite
 
 ## Quick start
@@ -31,27 +33,34 @@ Vite proxies `/api/*` → `http://localhost:8000`.
 
 ## API
 
-| Method | Path     | Purpose                                |
-|--------|----------|----------------------------------------|
-| GET    | /health  | health check                           |
-| POST   | /ingest  | multipart upload (`.pdf` / `.txt`)     |
-| POST   | /chat    | JSON `{question}` → `{answer, sources}`|
+| Method | Path | Purpose | Caller |
+|---|---|---|---|
+| GET | `/health` | health check | — |
+| POST | `/chat` (SSE) | streamed customer chat | Chat UI |
+| POST | `/ingest` (multipart) | admin uploads SOP / chat-context docs | Admin |
 
 ## Layout
 
 ```
 agentic-chat-system/
-├── backend/           FastAPI + LangChain
+├── backend/                     FastAPI + LangChain + LangGraph
 │   ├── app/
-│   │   ├── main.py        FastAPI routes
-│   │   ├── config.py      env-driven settings
-│   │   ├── ingest.py      load + split
-│   │   ├── vectorstore.py Chroma wrapper
-│   │   └── qa.py          retrieval + LLM
+│   │   ├── main.py              routes: /health, /chat (SSE), /ingest
+│   │   ├── config.py            env settings
+│   │   ├── ingest.py            SOP load + split
+│   │   ├── vectorstore.py       Chroma wrapper
+│   │   ├── vision.py            gpt-4o-mini vision extraction
+│   │   ├── data/                mock JSON loaders
+│   │   └── agents/              orchestrator + 5 sub-agents
 │   └── requirements.txt
-├── frontend/          React + Vite
+├── frontend/                    React + Vite
 │   └── src/
 │       ├── App.jsx
 │       └── main.jsx
-└── data/              Chroma persistence + uploads (gitignored)
+├── data/                        JSON fixtures + Chroma persistence (gitignored)
+└── docs/                        plan.md, images/
 ```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) — direct pushes to `main` are blocked; all changes go via PR.
