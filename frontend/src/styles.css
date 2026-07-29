@@ -1,0 +1,24 @@
+:root { font-family: ui-sans-serif, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body, html, #root { margin: 0; height: 100%; }
+.app { display: flex; flex-direction: column; height: 100vh; max-width: 800px; margin: 0 auto; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #eee; }
+header h1 { margin: 0; font-size: 18px; }
+.upload { background: #111; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+main { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.empty { color: #888; text-align: center; margin-top: 40px; }
+.msg { display: flex; flex-direction: column; }
+.msg.user { align-items: flex-end; }
+.msg.assistant, .msg.system { align-items: flex-start; }
+.bubble { padding: 10px 14px; border-radius: 10px; max-width: 80%; white-space: pre-wrap; }
+.msg.user .bubble { background: #111; color: #fff; }
+.msg.assistant .bubble { background: #f3f3f3; }
+.msg.system .bubble { background: #fff8e1; font-size: 13px; color: #555; }
+.sources { font-size: 12px; color: #555; max-width: 80%; }
+.sources summary { cursor: pointer; }
+.source { background: #fafafa; padding: 8px; border-radius: 6px; margin-top: 4px; }
+.source p { margin: 4px 0 0; color: #666; }
+form { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid #eee; }
+form input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; }
+form button { padding: 10px 18px; background: #111; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+form button:disabled { opacity: 0.5; cursor: not-allowed; }
