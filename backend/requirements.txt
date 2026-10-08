@@ -6,5 +6,5 @@ langchain==0.3.13
 langchain-openai==0.2.14
 langchain-community==0.3.13
 chromadb==0.5.20
-pypdf==5.1.0
+pypdf==6.19.0
 tiktoken==0.8.0
